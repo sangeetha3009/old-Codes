@@ -1,0 +1,20 @@
+
+public class player {
+	private String player_name;
+	private int die;
+
+	public void roll_die(){
+		this.die=(int )(Math.random() * 6 + 1);
+	}
+	public player(String player_name){
+		this.player_name=player_name;
+		this.die=0;
+	}
+	public static int player_position;
+	
+	public String getPlayer(){
+		return player_name;
+	}
+
+	
+}

@@ -1,0 +1,9 @@
+
+public class board {
+    public int board_state[100];
+
+	private	board(){
+	
+	}
+
+}

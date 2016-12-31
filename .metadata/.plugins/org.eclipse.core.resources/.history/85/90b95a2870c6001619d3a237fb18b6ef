@@ -1,0 +1,29 @@
+import java.util.Scanner;
+public class SnakeAndLadder {
+	
+	public void output(player p){
+		System.out.println("Roll die "+p.getPlayer());
+	}
+
+	public static void main(String[] args) {
+		// TODO Auto-generated method stub
+		String p1,p2;
+		Scanner input=new Scanner(System.in);
+		System.out.println("Player1, Enter your name ");
+		p1=input.nextLine();
+		System.out.println("Player2, Enter your name ");
+		p2=input.nextLine();
+		
+		player player1=new player(p1);
+		player player2=new player(p2);
+		
+		boolean game_over=false;
+		
+		while(!game_over){
+			
+			
+		}
+
+	}
+
+}

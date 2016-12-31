@@ -1,0 +1,8 @@
+
+public class die {
+		private int die1;
+		private int die2;
+		private int sum;
+		
+		int random = (int )(Math.random() * 100 + 1);
+}

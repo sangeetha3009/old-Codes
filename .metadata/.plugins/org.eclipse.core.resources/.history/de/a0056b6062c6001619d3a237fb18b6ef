@@ -1,0 +1,13 @@
+
+public class die {
+		private int die1;
+		private int die2;
+		private int sum;
+
+		public int roll_die(){
+			die1=(int )(Math.random() * 100 + 1);
+			die2=(int )(Math.random() * 100 + 1);
+			sum=die1+die2;
+			return sum;
+		}
+}

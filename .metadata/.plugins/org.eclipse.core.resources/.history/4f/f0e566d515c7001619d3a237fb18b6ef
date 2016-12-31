@@ -1,0 +1,15 @@
+public class playerid {
+    private static playerid id=null;
+    public static int player_id=0;
+    protected playerid(){
+    	
+    }
+    public static playerid getInstance(){
+    	if (id == null){
+    		id=new playerid();
+
+    	}
+    	return id;
+    }
+
+}

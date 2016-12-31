@@ -1,0 +1,40 @@
+
+public class player {
+	private String player_name;
+	private int die;
+    private int player_id;
+	public int roll_die(){
+		this.die=(int )(Math.random() * 6 + 1);
+		return this.die;
+	}
+	public player(String player_name){
+		this.player_name=player_name;
+		this.die=0;
+		player_position=0;
+		this.player_id=0;
+
+	}
+	public static int player_position;
+	
+	public String getPlayer(){
+		return this.player_name;
+	}
+
+	
+}
+class playerid {
+    private static playerid id=null;
+    static int player_id=0;
+    protected playerid(){
+    	
+    }
+    public static playerid getInstance(){
+    	if (id == null){
+    		id=new playerid();
+
+    	}
+    	return id;
+    }
+
+}
+

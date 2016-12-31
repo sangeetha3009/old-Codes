@@ -1,0 +1,28 @@
+
+public class player extends playerid{
+	private String player_name;
+	private int die;
+    private int id;
+    playerid r=playerid.getInstance();
+
+	public int roll_die(){
+		this.die=(int )(Math.random() * 6 + 1);
+		return this.die;
+	}
+	public player(String player_name){
+		this.player_name=player_name;
+		this.die=0;
+		player_position=0;
+		this.id=r.player_id;
+
+	}
+	public static int player_position;
+	
+	public String getPlayer(){
+		return this.player_name;
+	}
+    
+	
+}
+
+

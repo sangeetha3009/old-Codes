@@ -1,0 +1,29 @@
+
+public class player {
+	private String player_name;
+	private int die1;
+	private int die2;
+	private int sum;
+
+
+
+
+	public void roll_die(){
+		this.die1=(int )(Math.random() * 6 + 1);
+		this.die2=(int )(Math.random() * 6 + 1);
+		this.sum=die1+die2;
+	}
+	public player(String player_name){
+		this.player_name=player_name;
+		this.die1=0;
+		this.die2=0;
+		this.sum=0;
+	}
+	public static int player_position;
+	
+	public String getPlayer(){
+		return player_name;
+	}
+
+	
+}

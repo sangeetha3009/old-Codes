@@ -1,0 +1,8 @@
+
+public class player {
+	private String player_name;
+	public player(String player_name){
+		this.player_name=player_name
+	}
+
+}

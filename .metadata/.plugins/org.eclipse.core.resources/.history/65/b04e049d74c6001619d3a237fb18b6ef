@@ -1,0 +1,52 @@
+import java.util.Scanner;
+public class SnakeAndLadder {
+	
+	public static void player_turn(player p){
+		System.out.println("Roll die "+p.getPlayer());
+	}
+	
+	public static int gamePlay(player p){
+		board b=board.getInstance();
+		player_turn(p);
+		int die=p.roll_die();
+		p.player_position+=die;
+		b.board_state[p.player_position]=p;
+		if (p.player_position >= 100)
+			return -1;
+		else
+			return die;
+	}
+
+	public static void main(String[] args) {
+		// TODO Auto-generated method stub
+		String p1,p2;
+		Scanner input=new Scanner(System.in);
+		System.out.println("Player1, Enter your name ");
+		p1=input.nextLine();
+		System.out.println("Player2, Enter your name ");
+		p2=input.nextLine();
+		
+		player player1=new player(p1);
+		player player2=new player(p2);
+		
+		board b=board.getInstance();
+		int game_over=0;
+		
+		while(game_over >= 0){
+			switch(game_over){
+			case 0:
+				game_over=gamePlay(player1);
+				break;
+
+				
+			}
+			
+			
+		}
+		System.out.println("Game over!!!!");
+		System.out.println("Player details ");
+		System.out.println(b.board_state[100]);
+
+	}
+
+}

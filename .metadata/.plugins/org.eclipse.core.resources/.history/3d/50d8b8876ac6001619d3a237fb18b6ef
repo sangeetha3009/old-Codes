@@ -1,0 +1,15 @@
+//Singleton class to maintain one copy of the board
+public class board {
+    private static board board_instance=null;
+    static int[] board_state=new int[100];
+    protected board(){
+    	
+    }
+    public static board getInstance(){
+    	if (board_instance == null){
+    		board_instance=new board();
+    	}
+    	return board_instance;
+    }
+
+}

@@ -1,0 +1,808 @@
+package net.floodlightcontroller.hasupport;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import net.floodlightcontroller.hasupport.NetworkInterface.ElectionState;
+import net.floodlightcontroller.hasupport.NetworkInterface.netState;
+
+
+public class AsyncElection implements Runnable
+{
+	
+	private static Logger logger = LoggerFactory.getLogger(AsyncElection.class);
+	private ZMQNode network;
+	
+	protected static IHAWorkerService haworker;
+	public  HashMap<String,String> nodeOrder = new HashMap<String,String>();
+	
+	private final String sPort;
+	ArrayList<Thread> serverThreads = new ArrayList<Thread>();
+	private final String controllerID;
+	private final String priorityID;
+	
+	public AsyncElection(String sp, String cid,String pid) 
+	{
+		this.sPort    = sp;
+		this.controllerID  = cid;
+		this.priorityID    = pid;
+		this.setlead       = new String("SETLEAD "   + this.controllerID);
+		this.messageFromLeader     = new String("LEADER "    + this.controllerID);
+		this.iwon 		   = new String("IWON "      + this.controllerID);
+		this.heartbeat     = new String("HEARTBEAT " + this.controllerID);
+	}
+	
+	public AsyncElection(String sPort, String clientPort, String controllerID,String priorityID,IHAWorkerService haw){
+		this.network       = new ZMQNode(sPort,clientPort,controllerID,priorityID);
+		this.sPort    = sPort;
+		this.controllerID  = controllerID;
+		this.priorityID    = priorityID;
+		this.setlead       = new String("SETLEAD "   + this.controllerID);
+		this.messageFromLeader     = new String("LEADER "    + this.controllerID);
+		this.iwon 		   = new String("IWON "      + this.controllerID);
+		this.heartbeat     = new String("HEARTBEAT " + this.controllerID);
+		AsyncElection.haworker      = haw;
+		System.out.println("Jessi - Inside constrc priority is :" + this.priorityID);		
+	}
+	
+	/**
+	 * Indicates who the current leader of the entire system is.
+	 */
+	private String leader             = new String("none");
+	int previousLeader=0;
+	private String tempLeader         = new String("none");
+	private final String none         = new String("none");
+	private final String ack 		  = new String("ACK");
+	private final String publish 	  = new String("BPUBLISH");
+	private final String subscribe 	  = new String("KSUBSCRIBE");
+	private final String pulse        = new String("PULSE");
+	private final String you		  = new String("YOU?");
+	private final String no			  = new String("NO");
+	private final String leadok       = new String("LEADOK");
+	private final String iwon;
+	private final String setlead;
+	private final String messageFromLeader;
+	private final String heartbeat;
+	
+	
+	private ElectionState currentState = ElectionState.DISCOVER;
+
+	private Map<String, netState> connectionDict;
+
+	
+	public String getcontrollerID(){
+		return this.controllerID;
+	}
+	
+	public String getpriorityID(){
+		return this.priorityID;
+	}
+	
+	
+	public String getLeader(){
+		return this.leader;
+	}
+	
+	public String gettempLeader(){
+		return this.tempLeader;
+	}
+	
+	public void setLeader(String leader){
+		synchronized (this.leader) { 
+			this.leader = leader;
+			if(!leader.equals("none")){
+			this.previousLeader = Integer.parseInt(leader);
+			}
+		}
+		return;
+	}
+	
+	public void setTempLeader(String tempLeader){
+		synchronized(this.tempLeader) {
+			this.tempLeader = tempLeader;
+			logger.info("+++value set at templeader+++"+this.tempLeader);
+		}
+		return;
+	}
+	
+	/**
+	 * Server start
+	 */
+	public void joinServerThreads(){
+		try{
+			for (int i=0; i < serverThreads.size(); i++){
+					serverThreads.get(i).join(); 
+			}
+		} catch (InterruptedException ie){
+			ie.printStackTrace();
+		} catch (Exception e){
+			e.printStackTrace();
+		}
+		
+	}
+	
+	public void startServers(){
+		
+		Integer noServers = new Integer(0);
+		ZMQServer serverTh = new ZMQServer(this.sPort, this, this.controllerID);
+		
+		if (network.totalRounds <= 1){
+			noServers = 1;
+		} else {
+			noServers = (int) Math.ceil(Math.log10(network.totalRounds));
+		}
+		
+		if(noServers <= 1){
+			noServers =1;
+		}
+		
+		try{
+			for (Integer i=0; i < noServers; i++){
+				Thread tx = new Thread (serverTh, "ZMQServers");
+				logger.info("Starting server "+i.toString()+"...");
+				tx.start();
+				serverThreads.add(tx);
+			}
+		} catch (Exception e){
+			logger.info("[Node] startServers was interrrupted! "+e.toString());
+			e.printStackTrace();
+		}
+		
+	}
+	
+	public void publish(){
+		try{
+			
+			for(HashMap.Entry<String, netState> entry: this.connectionDict.entrySet())
+			{
+				if( this.connectionDict.get(entry.getKey()).equals(netState.ON) )
+				{	
+					network.send( entry.getKey(), publish );
+					network.recv(entry.getKey());
+					
+					// If we get an ACK, that's good.
+					logger.info("[Publish] Received ACK from "+entry.getKey().toString());
+				}
+			}
+			
+			return;
+			
+		} catch (Exception e){
+			logger.debug("[Election] Error in PUBLISH!");
+			e.printStackTrace();
+		}
+		
+	}
+	
+	public void subscribe(String cid){
+		try{
+			
+			for(HashMap.Entry<String, netState> entry: this.connectionDict.entrySet()){
+				if( this.connectionDict.get(entry.getKey()).equals(netState.ON) ){
+					
+					String submsg = new String(subscribe + " " + cid);
+					
+					network.send( entry.getKey(), submsg );
+					network.recv(entry.getKey());
+					
+					// If we get an ACK, that's good.
+					logger.info("[Subscribe] Received ACK from "+entry.getKey().toString());
+				}
+			}
+			
+			return;
+			
+		} catch (Exception e){
+			logger.debug("[Election] Error in SUBSCRIBE!");
+			e.printStackTrace();
+		}
+		
+	}
+	
+	private void sendHeartBeat()
+	{
+		// The Leader will send a HEARTBEAT message in the COORDINATE state
+		// after the election and will expect a reply from a majority of
+		// acceptors.
+		
+		HashSet<String> noSet = new HashSet<String>();
+		try{
+			
+			for(HashMap.Entry<String, netState> entry: this.connectionDict.entrySet()){
+				if( this.connectionDict.get(entry.getKey()).equals(netState.ON) ){
+					
+					// If the HeartBeat is rejected, populate the noSet.
+					network.send( entry.getKey(), heartbeat );
+					String reply = network.recv(entry.getKey());
+					
+					if ( reply.equals(no) ){
+						noSet.add(entry.getKey());
+					}
+					// If we get an ACK, that's good.
+					logger.info("[Election] Received HEARTBEAT ACK from "+entry.getKey().toString());
+				}
+			}
+			
+			if(noSet.size() >= network.majority){
+				setLeader(none);
+			}
+			
+			return;
+			
+		} catch (Exception e){
+			logger.debug("[Election] Error in sendHeartBeat!");
+			e.printStackTrace();
+		}
+		
+	}
+	
+	private void WonElections(){
+		// The winner of the election, or the largest node that is currently active
+		// in the network sends an "IWON" message in order to initiate the three phase
+		// commit to set itself as the leader of the network.
+		try{
+			Set<String> reply = new HashSet<String>();
+			for(HashMap.Entry<String, netState> entry: this.connectionDict.entrySet()){
+				if( this.connectionDict.get(entry.getKey()).equals(netState.ON) ){
+					
+					network.send(entry.getKey(), iwon);
+					reply.add( network.recv(entry.getKey()) );
+					logger.info("Received reply for IWON from: "+entry.getKey().toString() + reply.toString());
+					
+				}
+			}
+			
+			if( reply.contains(ack) ) {
+				setTempLeader(this.controllerID);
+			}
+			
+			return;
+					
+		} catch (Exception e){
+			logger.debug("[Election] Error in WonElections!");
+			e.printStackTrace();
+		}
+		
+	}
+	
+	private void sendLeaderMsg(){
+		// Send a "LEADER" message to all nodes and try to receive "LEADOK"
+		// messages from them. If count("LEADOK") > majority, then you have
+		// won the election and hence become the leader.
+		// Phase 2 of the three phase commit.
+		
+		HashSet<String> acceptors = new HashSet<String>();
+		try{
+			
+			for(HashMap.Entry<String, netState> entry: this.connectionDict.entrySet()){
+				if( this.connectionDict.get(entry.getKey()).equals(netState.ON) ){
+					
+					network.send(entry.getKey(), messageFromLeader);
+					String reply = network.recv(entry.getKey());
+					if( reply.equals(leadok) ){
+						acceptors.add(entry.getKey());
+					}
+				}
+				
+			}
+			
+			if( acceptors.size() >= network.majority ){
+				logger.info("[HAElection Algo] Accepted leader: "+this.controllerID+" Majority: "+network.majority+"Acceptors: "+acceptors.toString());
+				setLeader(network.controllerID);
+				this.currentState = ElectionState.LEAD;
+			} else {
+				logger.info("[HAElection Algo] Did not accept leader: "+this.controllerID+" Majority: "+network.majority+"Acceptors: "+acceptors.toString());
+				setLeader(none);
+				this.currentState = ElectionState.START_ELECT;
+			}
+			
+			return;
+			
+		} catch (Exception e){
+			logger.debug("[HAElection Algo Exception] Error in sendLeaderMsg!");
+			e.printStackTrace();
+		}
+		
+	}
+	
+	private void setAsLeader(){
+		// The leader will set itself as leader during each COORDINATE
+		// state loop, to ensure that all nodes see it as the leader.
+		// Phase 3 of the three phase commit.
+		
+		HashSet<String> noSet = new HashSet<String>();
+		try{
+			
+			for(HashMap.Entry<String, netState> entry: this.connectionDict.entrySet()){
+				if( this.connectionDict.get(entry.getKey()).equals(netState.ON) ){
+					
+					// If the leader is rejected, populate the noSet.
+					network.send(entry.getKey(), setlead);
+					String reply = network.recv(entry.getKey());
+					
+					if ( reply.equals(no) ){
+						noSet.add(entry.getKey());
+					}
+					
+					// If we get an ACK, that's good.
+					logger.info("[Election] Received SETLEAD ACK from "+entry.getKey().toString());
+				}
+			}
+			
+			if(noSet.size() >= network.majority){
+				setLeader(none);
+			}
+			
+			return;
+			
+		} catch (Exception e){
+			logger.debug("[Election] Error in setAsLeader!");
+			e.printStackTrace();
+		}
+		
+	}
+	
+	private void checkForLeader(){
+		// Ask each node if they are the leader, you should get an
+		// ACK from only one of them, if not, then reset the leader.
+		HashSet<String> leaderSet = new HashSet<String>();
+		try{
+			
+			for(HashMap.Entry<String, netState> entry: this.connectionDict.entrySet())
+			{
+				if( this.connectionDict.get(entry.getKey()).equals(netState.ON) )
+				{									
+					network.send(entry.getKey(), you);
+					String reply = network.recv(entry.getKey());
+					if (! reply.equals(no) )
+					{
+						leaderSet.add(reply);
+					} else if ( reply.equals(no) )
+					{
+						logger.info("[Election] Check Leader: " + reply +" from "+entry.getKey().toString());
+						logger.info("Previous leader "+this.previousLeader);
+						continue;
+					}
+					
+				}
+			}
+			
+			logger.info("[Election checkForLeader] Leader Set: "+leaderSet.toString());
+			
+			// Remove blank objects from set, if any.
+			if ( leaderSet.contains(new String("")) ){
+				leaderSet.remove(new String(""));
+			}
+			
+			// Remove none from set, if any.
+			if ( leaderSet.contains(none) ){
+				leaderSet.remove(none);
+			}
+			
+			// Remove null objects from set, if any.
+			if( leaderSet.contains(null) ){
+				logger.info("[Election] Leader Set contains null");
+				leaderSet.remove(null);
+			}
+			
+			
+			if( leaderSet.size() == 1 ){
+				 setLeader(leaderSet.stream()
+										.findFirst().get()); 
+			} else if ( leaderSet.size() > 1 ){
+				setLeader(none);
+				logger.info("[Election checkForLeader] SPLIT BRAIN!!");
+				logger.info("[Election checkForLeader] Current Leader is none");
+			} else if ( leaderSet.size() < 1 ){
+				setLeader(none);
+				logger.info("[Election checkForLeader] Current Leader is none "+ this.leader.toString() );
+			}
+			
+			//TODO This helps you in the case of two nodes active in a set of 4,
+			// where there is no leader but the smaller node still follows the larger.
+			
+//			if( this.leader.equals(none) ){
+//				this.currentState = ElectionState.ELECT;
+//				return;
+//			}
+			
+			return;
+			
+		} catch (Exception e){
+			logger.debug("[Election] Error in CheckForLeader");
+			e.printStackTrace();
+		}
+		
+	}
+	
+	private void electionLogic()
+	{
+		System.out.println("Jessi - Inside Electionlogic()");
+		System.out.println("Jessi - The controller ID  is :" + this.controllerID);
+		System.out.println("Jessi - The priority ID is :" + this.priorityID);		
+		nodeOrder.put(this.controllerID, this.priorityID);
+		System.out.println("Jessi - Printing the hash map");
+		Set set = nodeOrder.entrySet();
+		Iterator iterator = set.iterator();
+		while(iterator.hasNext()) 
+		{
+			Map.Entry mentry = (Map.Entry)iterator.next();
+			System.out.print("Jessi ControllerID is: "+ mentry.getKey() + " & Priority is: " + mentry.getValue());
+		}
+		
+		//nodeOrder = this.priorityID.split(",");
+		//System.out.println("Jessi - The nodeOrder element is " + nodeOrder[0]);
+		//System.out.println("Jessi - The nodeOrder size is " + nodeOrder.length);
+
+		// List of controllerIDs of all nodes.
+		ArrayList<Integer> nodes = new ArrayList<Integer>();
+		ArrayList<String> nodeString = new ArrayList<String>();
+		ArrayList<String> activeNodes = new ArrayList<String>();
+		Integer maxNode = new Integer(0);
+		Set<String> connectDictKeys =  this.connectionDict.keySet();
+		HashSet<Integer> activeCIDs = new HashSet<Integer>();
+		HashSet<String> activenodePIDs = new HashSet<String>();		
+		
+		// Generate list of total possible CIDs.
+		for (Integer i = (network.totalRounds+1) ; i > 0 ; i--)
+		{
+			nodes.add(i);
+		}
+		
+		nodeString.add("1:40");
+		nodeString.add("2:30");
+		nodeString.add("3:20");
+		nodeString.add("4:10");
+		
+		System.out.println(" Jessi print " +  nodeString);
+		
+		//Loading the priorities into a hash map called nodeOrder
+		/*String [] elements = this.priorityID.split(",");
+		for( int i = 0; i <= elements.length - 1; i++)
+		{
+			nodeOrder.put(elements[i].split(":")[1],elements[i].split(":")[0]);
+		}
+	
+		for (String port: connectDictKeys) 
+		{
+			if ( this.connectionDict.get(port) != null  && this.connectionDict.get(port).equals(netState.ON) ) 
+			{
+				System.out.println("Jessi - the port checking is " + this.connectionDict.get(port));
+				//activeNodes.add(nodeOrder.get(port));
+				//activeCIDs.add(network.netcontrollerIDStatic.get(port));
+			}
+		}
+
+		
+		//Printing the nodeOrder hashmap
+		Set set = nodeOrder.entrySet();
+		Iterator iterator = set.iterator();
+		while(iterator.hasNext()) 
+		{
+			Map.Entry mentry = (Map.Entry)iterator.next();
+			System.out.print("Jessi ControllerID is: "+ mentry.getKey() + " & Priority is: " + mentry.getValue());
+		}
+*/		
+
+		logger.info(" +++++++++ [Election Logic] Nodes participating: "+nodes.toString());
+		
+		// TODO Something weird is going on here...
+		
+		// Get the node whose CID is numerically greater.
+		
+		
+		
+		// Convert active controller ports into a Set of their IDs.
+		for (String port: connectDictKeys) 
+		{
+			if ( this.connectionDict.get(port) != null  && this.connectionDict.get(port).equals(netState.ON) ) 
+			{
+				activeCIDs.add(network.netcontrollerIDStatic.get(port));
+			}
+		}
+		activeCIDs.add(Integer.parseInt(this.controllerID));
+		logger.info("Active controllers: "+activeCIDs.toString()+"ConnectDict Keys: "+connectDictKeys.toString());
+
+		// Find the current active maxNode.
+/*		
+		for (Integer i=0 ; i< nodes.size(); i++ ) 
+		{
+			if ( activeCIDs.contains(nodes.get(i)) ) 
+			{
+				maxNode = nodes.get(i);
+				logger.info("Am the old man**** "+maxNode);
+				break;
+			}
+		}
+
+		//round-robin
+		int startIndex=1;
+		
+		logger.info("@@@Previous leader at every node@@@"+previousLeader);
+		logger.info("Active set "+activeCIDs);
+			int flag=1;
+			while(flag == 1)
+			{
+				int temp=previousLeader+startIndex;
+				if (temp> nodeString.size())
+					temp=temp%nodeString.size();
+				logger.info("@@@Temp value@@@"+temp+"    "+nodeString.size());
+				
+				if(activeCIDs.contains(temp) ){
+					System.out.println("Jessi - Inside activeCID check");
+					maxNode=temp;
+					//setLeader(maxNode.toString());
+					System.out.println("Jessi -  after election :" + maxNode);
+					System.out.println("Jessi -  after election previous leader value:" + this.previousLeader);
+					flag=0;
+					break;
+				}
+				else{
+					startIndex=startIndex+1;
+				}
+			}
+      		
+		//round-robin
+
+		*/
+		//priority logic
+		int maxpid=0;
+		int maxcid;
+		System.out.println("nodeString size is " + nodeString.size() );
+		for (Integer i=0 ; i< nodeString.size(); i++ ) 
+		{
+			logger.info("Are u goin in at all");
+			//this.previousLeader+=1;
+			
+			int node_cid=Integer.parseInt(nodeString.get(i).split(":")[0]);
+			String node_pid=nodeString.get(i).split(":")[1];
+			System.out.println("activeCID is " + activeCIDs );
+			System.out.println("node_cid size is " + node_cid );
+			if(activeCIDs.contains(node_cid))
+			{
+				if (Integer.parseInt(node_pid) > maxpid)
+				{
+					maxNode=node_cid;
+					maxpid=Integer.parseInt(node_pid);
+					logger.info("Max node and its priority**** "+maxNode +"**** "+node_pid);
+				}
+			}
+			
+		}
+		
+		logger.info("Final Max node and its priority**** "+maxNode +"**** ");
+		//end of priority logic
+		 
+		 
+		setLeader(maxNode.toString());
+		logger.info("value for previousLeader "+this.previousLeader);
+		/*
+		// Edge case where you are the max node && you are ON.
+		if ( new Integer(this.controllerID) >= maxNode )
+		{
+			maxNode = new Integer(this.controllerID);
+			setLeader(maxNode.toString());
+			return;
+		}
+		*/
+		String maxNodePort = network.controllerIDNetStatic.get(maxNode.toString()).toString();
+		logger.info("+++value of max node port ++++"+maxNodePort);
+		// Check if Max Node is alive, and set it as leader if it is.
+		try
+		{
+			
+			for(int i=0; i < network.numberOfPulses; i++){
+				
+				network.send(maxNodePort, pulse);
+				String reply = network.recv(maxNodePort);
+				logger.info("Message received at number of pulses "+reply+" from "+maxNodePort);
+				
+				if ( reply.equals(ack) ){
+					setLeader(maxNode.toString());
+				}
+			}
+			
+		} catch (Exception e) {
+			logger.debug("[Election] Error in electionLogic!");
+			e.printStackTrace();
+		}
+		
+		return;
+		
+	}
+	
+	private void elect(){
+		// Max Set election:
+		// All nodes will pick the max CID which they see in the network,
+		// any scenario wherein two different leaders might be picked gets resolved
+		// using the checkForLeader function.
+		
+		// Ensure that majority are still connected.
+		if( this.connectionDict.size() < network.majority ){
+			return;
+		}
+		
+		// Clear leader variables.
+		setTempLeader(none);
+		setLeader(none);
+		
+		// Check if actually in elect state
+		if (!(this.currentState == ElectionState.START_ELECT)){
+			return;
+		}
+		
+		// Node joins AFTER election:
+		// To check if a node joined after election, i.e.
+		// a leader is already present. Run the checkForLeader
+		// function and if it returns a leader then accept the 
+		// existing leader and go to the SPIN state.
+		
+		this.checkForLeader();
+		
+		// If a leader has already been set, exit election state 
+		// and SPIN.
+		if(! this.leader.equals(none) ){
+			this.currentState = ElectionState.LISTEN;
+			return;
+		}
+		
+		// End of Node joins AFTER election.
+		
+		// Actual election logic.
+		this.electionLogic();
+		
+		
+		if( this.leader.equals(network.controllerID) ){
+			logger.info("[Election] I WON THE ELECTION!");
+			this.WonElections();
+			this.sendLeaderMsg();
+			if(this.leader.equals(network.controllerID)) {
+				this.setAsLeader();
+			}
+		} else if ( this.leader.equals(none) ){
+			this.currentState = ElectionState.START_ELECT;
+		} else {
+			this.currentState = ElectionState.LISTEN;
+		}
+		
+		// End of Actual Election logic.
+		return;
+	}
+	
+	private void cases()
+	{
+		try 
+		{
+		while(! Thread.currentThread().isInterrupted()) 
+		{
+			logger.info("Current State: "+currentState.toString());
+			switch(currentState)
+			{
+				
+				case DISCOVER:
+					
+					// Block until a majority of the servers have connected.
+					this.currentState =  network.blockUntilConnected();
+					
+					// Majority of the servers have connected, moving on to elect.
+					break;
+					
+				case START_ELECT:
+					
+					// Check for new nodes to connect to, and refresh the socket connections.
+					this.connectionDict = network.checkForNewConnections();
+					
+					// Ensure that a majority of nodes have connected, otherwise demote state.
+					if( this.connectionDict.size() < network.majority ){
+						this.currentState = ElectionState.DISCOVER;
+						break;
+					}
+					
+					//Start the election if a majority of nodes have connected.
+					this.elect();
+					
+					// Once the election is done and the leader is confirmed,
+					// proceed to the COORDINATE or FOLLOW state.
+					break;
+					
+				case LISTEN:
+					
+					// This is the resting state after the election.
+					this.connectionDict = network.checkForNewConnections();
+					
+					if( this.leader.equals(none) ){
+						this.currentState = ElectionState.START_ELECT;
+						break;
+					}
+					
+					// This is the follower state, currently there is a leader in the network.
+					logger.info("+++++++++++++++ [FOLLOWER] Leader is set to: "+this.leader.toString());
+					
+					// Check For Leader: This function ensures that there is only one leader set for
+					// the entire network. None or multiple leaders causes it to set the currentState to ELECT.
+					this.checkForLeader();
+					TimeUnit.SECONDS.sleep(10);
+					
+					break;
+					
+				case LEAD:
+					
+					// This is the resting state of the leader after the election.
+					this.connectionDict = network.checkForNewConnections();
+					
+					if( this.leader.equals(none) ){
+						this.currentState = ElectionState.START_ELECT;
+						break;
+					}
+					
+					// This is the follower state, currently I am the leader of the network.
+					logger.info("+++++++++++++++ [LEADER] Leader is set to: "+this.leader.toString());
+					
+					// Keep the leader in coordinate state.
+					this.WonElections();
+					this.sendLeaderMsg();
+					if(this.leader.equals(network.controllerID)) 
+					{
+						this.setAsLeader();
+					}
+					
+					// Keep sending a heartbeat message, and receive a majority of acceptors,
+					// otherwise go to the elect state.
+					this.sendHeartBeat();
+					TimeUnit.SECONDS.sleep(10);
+					
+					break;
+					
+			}
+			
+		}
+		
+		} catch (InterruptedException ie) 
+		{
+			logger.debug("[Election] Exception in cases!");
+			ie.printStackTrace();
+		} catch (Exception e) 
+		{
+			logger.debug("[Election] Error in cases!");
+			e.printStackTrace();
+		}
+		
+	}
+
+	@Override
+	public void run() 
+	{
+		try
+		{
+			Thread n1 = new Thread (network, "ZMQThread");
+			
+			n1.start();
+			startServers();
+			
+			logger.info("[Election] Network majority: "+network.majority.toString());
+			logger.info("[Election] Get netControllerIDStatic: "+network.getnetControllerIDStatic().toString());	
+			this.cases();
+			
+			joinServerThreads();
+			n1.join();
+			
+		} catch (InterruptedException ie)
+		{
+			logger.info("[Network] Was interrrupted! "+ie.toString());
+			ie.printStackTrace();
+		} catch (Exception e)
+		{
+			logger.info("[Network] Was interrrupted! "+e.toString());
+			e.printStackTrace();
+		}
+	}
+
+}
